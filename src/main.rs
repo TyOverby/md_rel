@@ -12,12 +12,22 @@ use std::os::args;
 use std::io::BufferedReader;
 use std::io::BufferedWriter;
 use std::path::GenericPath;
+use std::io::MemReader;
+use std::io::MemWriter;
 
 #[deriving(Show, PartialEq)]
 enum LineType {
-    File(String), // (filename)
+    WholeFile(String), // (filename)
     Section(String, String), // (filename, sectionname)
     Lines(String, uint, uint) // (filename, startline, endline)
+}
+
+enum MdError {
+    IoProblem(IoError),
+    NonMatchingCode(String, uint),
+    SectionNotFound(String, uint),
+    InvalidLineChunk(String, uint, uint),
+    FileTooSmall(String, uint)
 }
 
 fn modify_path(mkdev_path: &str) -> String {
@@ -38,7 +48,7 @@ fn detect_type(line: &str) -> Option<LineType> {
 
     if file.is_match(line) {
         let capture = file.captures(line).unwrap();
-        Some(File(capture.at(1).to_string()))
+        Some(WholeFile(capture.at(1).to_string()))
     } else if section.is_match(line) {
         let capture = section.captures(line).unwrap();
         Some(Section(capture.at(1).to_string(), capture.at(2).to_string()))
@@ -57,7 +67,7 @@ fn detect_type(line: &str) -> Option<LineType> {
 fn rewrite<R: Reader, W: Writer>
 (linetype: LineType, fetch: |&str| -> BufferedReader<R>, out_buffer: &mut BufferedWriter<W>) -> IoResult<()> {
     let file = match linetype {
-        File(ref s) => s,
+        WholeFile(ref s) => s,
         Section(ref s, _) => s,
         Lines(ref s, _, _) => s,
     }.as_slice();
@@ -65,10 +75,11 @@ fn rewrite<R: Reader, W: Writer>
     let mut reader = fetch(file);
 
     match linetype {
-        File(_) => {
+        WholeFile(_) => {
             for line in reader.lines() {
-                try!(out_buffer.write_line(try!(line).as_slice()));
+                try!(out_buffer.write_str(try!(line).as_slice()));
             }
+            out_buffer.write_line("");
             Ok(())
         }
         Section(_, section_name) => {
@@ -80,7 +91,8 @@ fn rewrite<R: Reader, W: Writer>
                 if trimmed.starts_with(prelude) {
                     let name = trimmed
                         .slice_from(prelude.len())
-                        .trim_chars(' ');
+                        .trim_chars(' ')
+                        .trim_chars('\n');
                     if scanning {
                         break;
                     } else {
@@ -89,14 +101,14 @@ fn rewrite<R: Reader, W: Writer>
                         }
                     }
                 } else if scanning {
-                    out_buffer.write_line(line.as_slice());
+                    out_buffer.write_line(line.as_slice().trim_right_chars('\n'));
                 }
             }
             Ok(())
         }
         Lines(_, start, end) => {
-            for line in reader.lines().skip(start - 1).take(end - start) {
-                try!(out_buffer.write_line(try!(line).as_slice()));
+            for line in reader.lines().skip(start).take(end - start + 1) {
+                try!(out_buffer.write_line(try!(line).as_slice().trim_right_chars('\n')));
             }
             Ok(())
         }
@@ -147,7 +159,7 @@ fn test_modify_path() {
 fn test_detect_type() {
     assert_eq!(
         detect_type("^code(abc.rs)"),
-        Some(File("abc.rs".to_string())));
+        Some(WholeFile("abc.rs".to_string())));
     assert_eq!(
         detect_type("^code(abc.rs,sec)"),
         Some(Section("abc.rs".to_string(), "sec".to_string())));
@@ -156,7 +168,7 @@ fn test_detect_type() {
         Some(Lines("abc.rs".to_string(), 0, 10)));
     assert_eq!(
         detect_type("^code(  abc.rs    )"),
-        Some(File("abc.rs".to_string())));
+        Some(WholeFile("abc.rs".to_string())));
     assert_eq!(
         detect_type("^code(    abc.rs  ,  sec   )"),
         Some(Section("abc.rs".to_string(), "sec".to_string())));
@@ -164,10 +176,32 @@ fn test_detect_type() {
 
 #[test]
 fn test_rewrite() {
-    use std::io::MemReader;
-    {
+    fn run_rewrite<S: Str>(lt: LineType, provided: Vec<S>) -> String {
+        let string_form = provided.connect("\n");
         let mut input = vec![];
-        input.push_all("test\n".as_bytes());
-        let mut input = MemReader::new(input);
+        input.push_all(string_form.as_bytes());
+        let c = || BufferedReader::new(MemReader::new(input.clone()));
+
+        let output = MemWriter::new();
+        let mut out_buf = BufferedWriter::new(output);
+        rewrite(lt, |_| c(), &mut out_buf);
+        String::from_utf8(out_buf.unwrap().unwrap()).unwrap()
     }
+    assert_eq!(run_rewrite(WholeFile("a".to_string()), vec!["foo"]),
+               "foo\n".to_string());
+    assert_eq!(run_rewrite(WholeFile("a".to_string()),
+                   vec!["foo", "bar", "baz"]),
+               "foo\nbar\nbaz\n".to_string());
+
+    assert_eq!(run_rewrite(Section("a".to_string(), "f".to_string()),
+                    vec!["abc", "// section f", "foo", "bar"]),
+               "foo\nbar\n".to_string());
+    assert_eq!(run_rewrite(Section("a".to_string(), "f".to_string()),
+                    vec!["abc", "// section f", "foo",
+                         "bar", "// section baz", "go"]),
+               "foo\nbar\n".to_string());
+    assert_eq!(run_rewrite(Lines("a".to_string(), 1, 3),
+                    vec!["abc", "bar", "foo",
+                         "bar", "back", "go"]),
+               "bar\nfoo\nbar\n".to_string());
 }
