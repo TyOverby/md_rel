@@ -3,10 +3,13 @@
 extern crate regex;
 #[phase(plugin)]
 extern crate regex_macros;
+#[phase(plugin)]
+extern crate try_or;
 
 use std::io::{
     File,
-    IoResult
+    IoResult,
+    IoError
 };
 use std::os::args;
 use std::io::BufferedReader;
@@ -22,13 +25,18 @@ enum LineType {
     Lines(String, uint, uint) // (filename, startline, endline)
 }
 
+#[deriving(PartialEq, Eq, Show)]
 enum MdError {
-    IoProblem(IoError),
-    NonMatchingCode(String, uint),
+    SourceError(IoError),
+    ImportError(IoError),
+    OutputError(IoError),
+    NonMatchingCode(String),
     SectionNotFound(String, uint),
-    InvalidLineChunk(String, uint, uint),
+    InvalidLineChunk(String),
     FileTooSmall(String, uint)
 }
+
+type MdResult<A> = Result<A, MdError>;
 
 fn modify_path(mkdev_path: &str) -> String {
     if mkdev_path.ends_with(".md.dev") {
@@ -65,19 +73,22 @@ fn detect_type(line: &str) -> Option<LineType> {
 }
 
 fn rewrite<R: Reader, W: Writer>
-(linetype: LineType, fetch: |&str| -> BufferedReader<R>, out_buffer: &mut BufferedWriter<W>) -> IoResult<()> {
+(linetype: LineType, fetch: |&str| -> IoResult<BufferedReader<R>>,
+out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
     let file = match linetype {
         WholeFile(ref s) => s,
         Section(ref s, _) => s,
         Lines(ref s, _, _) => s,
     }.as_slice();
 
-    let mut reader = fetch(file);
+    let mut reader = try_or!(fetch(file), ImportError);
 
     match linetype {
         WholeFile(_) => {
             for line in reader.lines() {
-                try!(out_buffer.write_str(try!(line).as_slice()));
+                let line = try_or!(line, ImportError);
+                let line = line.as_slice();
+                try_or!(out_buffer.write_str(line), OutputError);
             }
             out_buffer.write_line("");
             Ok(())
@@ -85,7 +96,7 @@ fn rewrite<R: Reader, W: Writer>
         Section(_, section_name) => {
             let mut scanning = false;
             for line in reader.lines() {
-                let line = try!(line);
+                let line = try_or!(line, ImportError);
                 let trimmed = line.as_slice().trim_left_chars(' ');
                 let prelude = "// section ";
                 if trimmed.starts_with(prelude) {
@@ -101,14 +112,17 @@ fn rewrite<R: Reader, W: Writer>
                         }
                     }
                 } else if scanning {
-                    out_buffer.write_line(line.as_slice().trim_right_chars('\n'));
+                    let line = line.as_slice().trim_right_chars('\n');
+                    try_or!(out_buffer.write_line(line), OutputError);
                 }
             }
             Ok(())
         }
         Lines(_, start, end) => {
             for line in reader.lines().skip(start).take(end - start + 1) {
-                try!(out_buffer.write_line(try!(line).as_slice().trim_right_chars('\n')));
+                let line = try_or!(line, ImportError);
+                let line = line.as_slice().trim_right_chars('\n');
+                try_or!(out_buffer.write_line(line), OutputError);
             }
             Ok(())
         }
@@ -116,25 +130,26 @@ fn rewrite<R: Reader, W: Writer>
 }
 
 fn process_file<R: Reader, W: Writer>
-(in_buffer: BufferedReader<R>, out_buffer: BufferedWriter<W>, fetch: |&str| -> BufferedReader<R>) -> IoResult<()> {
+(in_buffer: BufferedReader<R>, out_buffer: BufferedWriter<W>,
+fetch: |&str| -> IoResult<BufferedReader<R>>) -> MdResult<()> {
     let mut in_buffer = in_buffer;
     let mut out_buffer = out_buffer;
     for line in in_buffer.lines() {
-        let line = try!(line);
+        let line = try_or!(line, SourceError);
         let line = line.as_slice();
         if line.starts_with("^code") {
             match detect_type(line) {
                 Some(typ) => {
-                    try!(out_buffer.write_line("```rust"));
+                    try_or!(out_buffer.write_line("```rust"), OutputError);
                     try!(rewrite(typ, |a| fetch(a), &mut out_buffer));
-                    try!(out_buffer.write_line("```"));
+                    try_or!(out_buffer.write_line("```"), OutputError);
                 }
                 None => {
 
                 }
             }
         } else {
-            try!(out_buffer.write_line(line));
+            try_or!(out_buffer.write_line(line), OutputError);
         }
     }
     Ok(())
@@ -180,7 +195,7 @@ fn test_rewrite() {
         let string_form = provided.connect("\n");
         let mut input = vec![];
         input.push_all(string_form.as_bytes());
-        let c = || BufferedReader::new(MemReader::new(input.clone()));
+        let c = || Ok(BufferedReader::new(MemReader::new(input.clone())));
 
         let output = MemWriter::new();
         let mut out_buf = BufferedWriter::new(output);
