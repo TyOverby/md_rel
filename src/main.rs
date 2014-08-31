@@ -73,7 +73,7 @@ fn detect_type(line: &str) -> Option<LineType> {
 }
 
 fn rewrite<R: Reader, W: Writer>
-(linetype: LineType, fetch: |&str| -> IoResult<BufferedReader<R>>,
+(linetype: LineType, fetch: |&str| -> MdResult<BufferedReader<R>>,
 out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
     let file = match linetype {
         WholeFile(ref s) => s,
@@ -81,7 +81,7 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
         Lines(ref s, _, _) => s,
     }.as_slice();
 
-    let mut reader = try_or!(fetch(file), ImportError);
+    let mut reader = try_or!(fetch(file));
 
     match linetype {
         WholeFile(_) => {
@@ -130,8 +130,8 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
 }
 
 fn process_file<R: Reader, W: Writer>
-(in_buffer: BufferedReader<R>, out_buffer: BufferedWriter<W>,
-fetch: |&str| -> IoResult<BufferedReader<R>>) -> MdResult<()> {
+(in_buffer: &mut BufferedReader<R>, out_buffer: &mut BufferedWriter<W>,
+fetch: |&str| -> MdResult<BufferedReader<R>>) -> MdResult<()> {
     let mut in_buffer = in_buffer;
     let mut out_buffer = out_buffer;
     for line in in_buffer.lines() {
@@ -141,7 +141,7 @@ fetch: |&str| -> IoResult<BufferedReader<R>>) -> MdResult<()> {
             match detect_type(line) {
                 Some(typ) => {
                     try_or!(out_buffer.write_line("```rust"), OutputError);
-                    try!(rewrite(typ, |a| fetch(a), &mut out_buffer));
+                    try_or!(rewrite(typ, |a| fetch(a), out_buffer));
                     try_or!(out_buffer.write_line("```"), OutputError);
                 }
                 None => {
@@ -149,10 +149,14 @@ fetch: |&str| -> IoResult<BufferedReader<R>>) -> MdResult<()> {
                 }
             }
         } else {
-            try_or!(out_buffer.write_line(line), OutputError);
+            try_or!(out_buffer.write_line(line.trim_right_chars('\n')), OutputError);
         }
     }
     Ok(())
+}
+
+fn transform_file(source: Path) {
+
 }
 
 fn main() {
@@ -219,4 +223,46 @@ fn test_rewrite() {
                     vec!["abc", "bar", "foo",
                          "bar", "back", "go"]),
                "bar\nfoo\nbar\n".to_string());
+}
+
+#[test]
+fn test_process_files() {
+    fn str_to_input_buffer<S: Str>(lines: Vec<S>) -> BufferedReader<MemReader> {
+        let string_form = lines.connect("\n");
+        let mut input = vec![];
+        input.push_all(string_form.as_bytes());
+        BufferedReader::new(MemReader::new(input.clone()))
+    }
+    fn grab_files(filename: &str) -> MdResult<BufferedReader<MemReader>> {
+        Ok(match filename {
+            "a.rs" => str_to_input_buffer(vec!["ars", "// section a", "blue whale", "foo"]),
+            "b.rs" => str_to_input_buffer(vec!["fizz", "buzzl", "bar"]),
+            "c.rs" => str_to_input_buffer(vec!["ack", "it's a trap", "bar"]),
+            _ => str_to_input_buffer(vec!["foo"])
+        })
+    }
+    fn out_buffer_to_string(writer: BufferedWriter<MemWriter>) -> String {
+        String::from_utf8(writer.unwrap().unwrap()).unwrap()
+    }
+    fn run_test(lines: Vec<&'static str>) -> String {
+        let mut writer = BufferedWriter::new(MemWriter::new());
+        let mut reader = str_to_input_buffer(lines);
+        process_file(&mut reader, &mut writer, grab_files);
+        out_buffer_to_string(writer)
+    }
+    assert_eq!(run_test(
+        vec![ "a", "b", "^code(a.rs, a)" ]),
+       "a\nb\n```rust\nblue whale\nfoo\n```\n".to_string())
+
+    assert_eq!(run_test(
+        vec![ "a", "b", "^code(a.rs, a)", "c" ]),
+       "a\nb\n```rust\nblue whale\nfoo\n```\nc\n".to_string())
+
+    assert_eq!(run_test(
+        vec![ "a", "b", "^code(b.rs)", "c" ]),
+       "a\nb\n```rust\nfizz\nbuzzl\nbar\n```\nc\n".to_string())
+
+    assert_eq!(run_test(
+        vec![ "a", "b", "^code(c.rs, 1, 2)", "c" ]),
+       "a\nb\n```rust\nit's a trap\nbar\n```\nc\n".to_string())
 }
