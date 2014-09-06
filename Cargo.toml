@@ -1,8 +1,15 @@
 [package]
-
-name = "markdown-relative-code"
+name = "md_rel"
 version = "0.0.1"
 authors = ["Ty Overby <ty@pre-alpha.com>"]
 
 [dependencies.try_or]
 git = "https://github.com/TyOverby/try_or.git"
+
+[[bin]]
+name = "md_rel"
+path = "src/main.rs"
+
+[lib]
+name = "md_rel"
+path = "src/lib.rs"

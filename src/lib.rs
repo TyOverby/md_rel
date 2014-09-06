@@ -8,14 +8,14 @@ extern crate try_or;
 
 use std::io::{
     File,
-    IoResult,
     IoError
 };
-use std::os::args;
 use std::io::BufferedReader;
 use std::io::BufferedWriter;
 use std::path::GenericPath;
+#[cfg(test)]
 use std::io::MemReader;
+#[cfg(test)]
 use std::io::MemWriter;
 
 #[deriving(Show, PartialEq)]
@@ -26,7 +26,9 @@ enum LineType {
 }
 
 #[deriving(PartialEq, Eq, Show)]
-enum MdError {
+pub enum MdError {
+    OpenReadError(IoError),
+    OpenWriteError(IoError),
     SourceError(IoError),
     ImportError(IoError),
     OutputError(IoError),
@@ -36,18 +38,7 @@ enum MdError {
     FileTooSmall(String, uint)
 }
 
-type MdResult<A> = Result<A, MdError>;
-
-fn modify_path(mkdev_path: &str) -> String {
-    if mkdev_path.ends_with(".md.dev") {
-        return mkdev_path.slice_to(mkdev_path.len() - 4).to_string();
-    } else {
-        let mut buf = mkdev_path.to_string();
-        buf.push_str(".md");
-        return buf;
-    }
-}
-
+pub type MdResult<A> = Result<A, MdError>;
 
 fn detect_type(line: &str) -> Option<LineType> {
     let file = regex!(r"\^code\( *([^, ]+) *\)");
@@ -90,7 +81,7 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
                 let line = line.as_slice();
                 try_or!(out_buffer.write_str(line), OutputError);
             }
-            out_buffer.write_line("");
+            try_or!(out_buffer.write_line(""), OutputError);
             Ok(())
         }
         Section(_, section_name) => {
@@ -129,11 +120,11 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
     }
 }
 
-fn process_file<R: Reader, W: Writer>
+pub fn process_file<R: Reader, W: Writer>
 (in_buffer: &mut BufferedReader<R>, out_buffer: &mut BufferedWriter<W>,
 fetch: |&str| -> MdResult<BufferedReader<R>>) -> MdResult<()> {
-    let mut in_buffer = in_buffer;
-    let mut out_buffer = out_buffer;
+    let in_buffer = in_buffer;
+    let out_buffer = out_buffer;
     for line in in_buffer.lines() {
         let line = try_or!(line, SourceError);
         let line = line.as_slice();
@@ -155,15 +146,34 @@ fetch: |&str| -> MdResult<BufferedReader<R>>) -> MdResult<()> {
     Ok(())
 }
 
-fn transform_file(source: Path) {
+pub fn transform_file(source: &str) -> MdResult<()> {
+    let out_name = {
+        let mut base;
+        if source.ends_with(".dev.md") {
+            base = String::from_str(source.slice_to(source.len() - 7));
+        } else {
+            base = String::from_str(source);
+        }
+        base.push_str(".md");
+        base
+    };
+    let in_path = Path::new(source);
+    let out_path = Path::new(out_name);
+    let mut relative_path = in_path.clone();
+    relative_path.pop();
 
-}
+    let read_file = try_or!(File::open(&in_path), OpenReadError);
+    let write_file = try_or!(File::create(&out_path), OpenWriteError);
 
-fn main() {
-    for file in args().iter() {
-        let file = file.as_slice();
-        //process_file(file, modify_path(file).as_slice());
-    }
+    let mut read_buffer = BufferedReader::new(read_file);
+    let mut write_buffer = BufferedWriter::new(write_file);
+
+    process_file(&mut read_buffer, &mut write_buffer, |extra| {
+        let mut temp = relative_path.clone();
+        temp.push(extra);
+        let source_file = try_or!(File::open(&temp), OpenReadError);
+        Ok(BufferedReader::new(source_file))
+    })
 }
 
 
