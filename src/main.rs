@@ -4,6 +4,6 @@ use std::os::args;
 fn main() {
     for file in args().iter() {
         let file = file.as_slice();
-        md_rel::transform_file(file);
+        let _ = md_rel::transform_file(file);
     }
 }
