@@ -46,15 +46,15 @@ pub fn detect_type(line: &str) -> Option<LineType> {
 
     if file.is_match(line) {
         let capture = file.captures(line).unwrap();
-        Some(LineType::WholeFile(capture.at(1).to_string()))
+        Some(LineType::WholeFile(capture.at(1).unwrap().to_string()))
     } else if section.is_match(line) {
         let capture = section.captures(line).unwrap();
-        Some(LineType::Section(capture.at(1).to_string(), capture.at(2).to_string()))
+        Some(LineType::Section(capture.at(1).unwrap().to_string(), capture.at(2).unwrap().to_string()))
     } else if lines.is_match(line) {
         let capture = lines.captures(line).unwrap();
-        let (start, end) = (from_str(capture.at(2)), from_str(capture.at(3)));
+        let (start, end) = (capture.at(2).unwrap().parse(), capture.at(3).unwrap().parse());
         match (start, end) {
-            (Some(s), Some(e)) => Some(LineType::Lines(capture.at(1).to_string(), s, e)),
+            (Some(s), Some(e)) => Some(LineType::Lines(capture.at(1).unwrap().to_string(), s, e)),
             _ => None
         }
     } else {
@@ -156,6 +156,7 @@ pub fn transform_file(source: &str) -> MdResult<()> {
         base.push_str(".md");
         base
     };
+    
     let in_path = Path::new(source);
     let out_path = Path::new(out_name);
     let mut relative_path = in_path.clone();
