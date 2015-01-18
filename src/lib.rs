@@ -1,9 +1,9 @@
-#![feature(phase)]
-#![feature(globs)]
+#![feature(plugin)]
+#![allow(unstable)]
 
 extern crate regex;
-#[phase(plugin)] extern crate regex_macros;
-#[phase(plugin)] extern crate try_or;
+#[plugin] extern crate regex_macros;
+#[macro_use] extern crate try_or;
 
 use std::io::{
     File,
@@ -17,14 +17,14 @@ use std::path::GenericPath;
 #[cfg(test)]
 mod test;
 
-#[deriving(Show, PartialEq)]
+#[derive(Show, PartialEq)]
 pub enum LineType {
     WholeFile(String), // (filename)
     Section(String, String), // (filename, sectionname)
-    Lines(String, uint, uint) // (filename, startline, endline)
+    Lines(String, usize, usize) // (filename, startline, endline)
 }
 
-#[deriving(PartialEq, Eq, Show)]
+#[derive(PartialEq, Eq, Show)]
 pub enum MdError {
     OpenRead(IoError),
     OpenWrite(IoError),
@@ -32,9 +32,9 @@ pub enum MdError {
     Import(IoError),
     Output(IoError),
     NonMatchingCode(String),
-    SectionNotFound(String, uint),
+    SectionNotFound(String, usize),
     InvalidLineChunk(String),
-    FileTooSmall(String, uint)
+    FileTooSmall(String, usize)
 }
 
 pub type MdResult<A> = Result<A, MdError>;
@@ -62,9 +62,9 @@ pub fn detect_type(line: &str) -> Option<LineType> {
     }
 }
 
-pub fn rewrite<R: Reader, W: Writer>
-(linetype: LineType, fetch: |&str| -> MdResult<BufferedReader<R>>,
-out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
+pub fn rewrite<R, W, F> (linetype: LineType, fetch: F, out_buffer: &mut BufferedWriter<W>) -> MdResult<()>
+where F: Fn(&str) -> MdResult<BufferedReader<R>>,
+      R: Reader, W: Writer {
     let file = match linetype {
         LineType::WholeFile(ref s) => s,
         LineType::Section(ref s, _) => s,
@@ -87,13 +87,13 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
             let mut scanning = false;
             for line in reader.lines() {
                 let line = try_or!(line, MdError::Import);
-                let trimmed = line.as_slice().trim_left_chars(' ');
+                let trimmed = line.as_slice().trim_left_matches(' ');
                 let prelude = "// section ";
                 if trimmed.starts_with(prelude) {
                     let name = trimmed
                         .slice_from(prelude.len())
-                        .trim_chars(' ')
-                        .trim_chars('\n');
+                        .trim_matches(' ')
+                        .trim_matches('\n');
                     if scanning {
                         break;
                     } else {
@@ -102,7 +102,7 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
                         }
                     }
                 } else if scanning {
-                    let line = line.as_slice().trim_right_chars('\n');
+                    let line = line.as_slice().trim_right_matches('\n');
                     try_or!(out_buffer.write_line(line), MdError::Output);
                 }
             }
@@ -111,7 +111,7 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
         LineType::Lines(_, start, end) => {
             for line in reader.lines().skip(start).take(end - start + 1) {
                 let line = try_or!(line, MdError::Import);
-                let line = line.as_slice().trim_right_chars('\n');
+                let line = line.as_slice().trim_right_matches('\n');
                 try_or!(out_buffer.write_line(line), MdError::Output);
             }
             Ok(())
@@ -119,9 +119,10 @@ out_buffer: &mut BufferedWriter<W>) -> MdResult<()> {
     }
 }
 
-pub fn process_file<R: Reader, W: Writer>
-(in_buffer: &mut BufferedReader<R>, out_buffer: &mut BufferedWriter<W>,
-fetch: |&str| -> MdResult<BufferedReader<R>>) -> MdResult<()> {
+pub fn process_file<R, W, F> (in_buffer: &mut BufferedReader<R>,
+                              out_buffer: &mut BufferedWriter<W>,
+                              fetch: F) -> MdResult<()>
+where R: Reader, W: Writer, F: Fn(&str) -> MdResult<BufferedReader<R>> {
     let in_buffer = in_buffer;
     let out_buffer = out_buffer;
     for line in in_buffer.lines() {
@@ -139,7 +140,7 @@ fetch: |&str| -> MdResult<BufferedReader<R>>) -> MdResult<()> {
                 }
             }
         } else {
-            try_or!(out_buffer.write_line(line.trim_right_chars('\n')), MdError::Output);
+            try_or!(out_buffer.write_line(line.trim_right_matches('\n')), MdError::Output);
         }
     }
     Ok(())
@@ -156,7 +157,7 @@ pub fn transform_file(source: &str) -> MdResult<()> {
         base.push_str(".md");
         base
     };
-    
+
     let in_path = Path::new(source);
     let out_path = Path::new(out_name);
     let mut relative_path = in_path.clone();
