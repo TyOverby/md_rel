@@ -1,3 +1,6 @@
+#![feature(core)]
+#![feature(os)]
+
 extern crate md_rel;
 use std::os::args;
 

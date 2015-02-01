@@ -5,12 +5,12 @@ extern crate regex;
 #[plugin] extern crate regex_macros;
 #[macro_use] extern crate try_or;
 
-use std::io::{
+use std::old_io::{
     File,
     IoError
 };
-use std::io::BufferedReader;
-use std::io::BufferedWriter;
+use std::old_io::BufferedReader;
+use std::old_io::BufferedWriter;
 use std::path::GenericPath;
 
 
