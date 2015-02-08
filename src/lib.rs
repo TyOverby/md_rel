@@ -5,13 +5,10 @@ extern crate regex;
 #[plugin] extern crate regex_macros;
 #[macro_use] extern crate try_or;
 
-use std::io::{
-    File,
-    IoError
-};
-use std::io::BufferedReader;
-use std::io::BufferedWriter;
-use std::path::GenericPath;
+use std::old_io::{ File, IoError };
+use std::old_io::BufferedReader;
+use std::old_io::BufferedWriter;
+use std::old_path::GenericPath;
 
 
 #[cfg(test)]
@@ -54,7 +51,7 @@ pub fn detect_type(line: &str) -> Option<LineType> {
         let capture = lines.captures(line).unwrap();
         let (start, end) = (capture.at(2).unwrap().parse(), capture.at(3).unwrap().parse());
         match (start, end) {
-            (Some(s), Some(e)) => Some(LineType::Lines(capture.at(1).unwrap().to_string(), s, e)),
+            (Ok(s), Ok(e)) => Some(LineType::Lines(capture.at(1).unwrap().to_string(), s, e)),
             _ => None
         }
     } else {

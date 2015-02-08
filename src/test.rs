@@ -1,7 +1,7 @@
-use std::io::MemReader;
-use std::io::MemWriter;
-use std::io::BufferedReader;
-use std::io::BufferedWriter;
+use std::old_io::MemReader;
+use std::old_io::MemWriter;
+use std::old_io::BufferedReader;
+use std::old_io::BufferedWriter;
 
 use super::*;
 
