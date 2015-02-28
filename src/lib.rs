@@ -1,8 +1,8 @@
 #![feature(plugin)]
 #![allow(unstable)]
+#![plugin(regex_macros)]
 
 extern crate regex;
-#[plugin] extern crate regex_macros;
 #[macro_use] extern crate try_or;
 
 use std::old_io::{ File, IoError };
