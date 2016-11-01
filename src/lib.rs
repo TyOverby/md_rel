@@ -19,6 +19,33 @@ pub enum LineType {
     Lines(String, usize, usize) // (filename, startline, endline)
 }
 
+impl LineType {
+    pub fn guess_language(&self) -> &str {
+        let filename = self.get_filename();
+        LineType::guess_language_by_filename(filename)
+    }
+
+    pub fn get_filename(&self) -> &str {
+        match *self {
+            LineType::WholeFile(ref filename) => filename,
+            LineType::Section(ref filename, _) => filename,
+            LineType::Lines(ref filename, _, _) => filename
+        }
+    }
+
+    fn guess_language_by_filename(filename: &str) -> &str {
+        let file_ext_regex = regex!(r".*\.([a-zA-Z0-9]+)");
+        let file_ext = file_ext_regex.captures(filename).map_or("", |caps| caps.at(1).unwrap());
+
+        // For now, we assume that if the file extension isn't in this list, it matches the name of the language
+        match file_ext {
+            "rs" => "rust",
+            //"toml" => "toml", // redundant
+            _ => file_ext
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum MdError {
     OpenRead(IoError),
@@ -125,7 +152,10 @@ where R: Read, W: Write, F: Fn(&str) -> MdResult<BufReader<R>> {
         if line.starts_with("^code") {
             match detect_type(line) {
                 Some(typ) => {
-                    try_or!(writeln!(out_buffer, "```rust"), MdError::Output);
+                    {
+                        let lang = typ.guess_language();
+                        try_or!(writeln!(out_buffer, "```{}", lang), MdError::Output);
+                    }
                     try_or!(rewrite(typ, |a| fetch(a), out_buffer));
                     try_or!(writeln!(out_buffer, "{}", "```"), MdError::Output);
                 }
