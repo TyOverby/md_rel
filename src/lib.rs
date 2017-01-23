@@ -1,17 +1,39 @@
-#![feature(plugin)]
-#![plugin(regex_macros)]
-
 extern crate regex;
-#[macro_use] extern crate try_or;
 
 use std::fs::File;
 use std::io::Error as IoError;
 use std::io::{BufReader, BufWriter, BufRead, Read, Write};
 use std::path::PathBuf;
+use regex::Regex;
 
 #[cfg(test)]
 mod test;
 
+macro_rules! try_or(
+    ($e:expr) => (
+        match $e {
+            Ok(e) => e,
+            Err(e) => return Err(e)
+
+        }
+    );
+    ($e:expr, $c:expr) => (
+        match $e {
+            Ok(e) => e,
+            Err(e) => {
+                return Err(($c)(e))
+            }
+        }
+    );
+    ($e:expr, $c:ident) => (
+        match $e {
+            Ok(e) => e,
+            Err(e) => {
+                return Err($c(e))
+            }
+        }
+    );
+);
 #[derive(Debug, PartialEq)]
 pub enum LineType {
     WholeFile(String), // (filename)
@@ -34,8 +56,8 @@ impl LineType {
     }
 
     fn guess_language_by_filename(filename: &str) -> &str {
-        let file_ext_regex = regex!(r".*\.([a-zA-Z0-9]+)");
-        let file_ext = file_ext_regex.captures(filename).map_or("", |caps| caps.at(1).unwrap());
+        let file_ext_regex = Regex::new(r".*\.([a-zA-Z0-9]+)").unwrap();
+        let file_ext = file_ext_regex.captures(filename).map_or("", |caps| caps.get(1).unwrap().as_str());
 
         // For now, we assume that if the file extension isn't in this list, it matches the name of the language
         match file_ext {
@@ -62,21 +84,21 @@ pub enum MdError {
 pub type MdResult<A> = Result<A, MdError>;
 
 pub fn detect_type(line: &str) -> Option<LineType> {
-    let file = regex!(r"\^code\( *([^, ]+) *\)");
-    let section = regex!(r"\^code\( *([^, ]+) *, *([a-zA-Z]+) *\)");
-    let lines = regex!(r"\^code\( *([^, ]+) *, *([0-9]+) *, *([0-9]+) *\)");
+    let file = Regex::new(r"\^code\( *([^, ]+) *\)").unwrap();
+    let section = Regex::new(r"\^code\( *([^, ]+) *, *([a-zA-Z]+) *\)").unwrap();
+    let lines = Regex::new(r"\^code\( *([^, ]+) *, *([0-9]+) *, *([0-9]+) *\)").unwrap();
 
     if file.is_match(line) {
         let capture = file.captures(line).unwrap();
-        Some(LineType::WholeFile(capture.at(1).unwrap().to_string()))
+        Some(LineType::WholeFile(capture.get(1).unwrap().as_str().to_string()))
     } else if section.is_match(line) {
         let capture = section.captures(line).unwrap();
-        Some(LineType::Section(capture.at(1).unwrap().to_string(), capture.at(2).unwrap().to_string()))
+        Some(LineType::Section(capture.get(1).unwrap().as_str().to_string(), capture.get(2).unwrap().as_str().to_string()))
     } else if lines.is_match(line) {
         let capture = lines.captures(line).unwrap();
-        let (start, end) = (capture.at(2).unwrap().parse(), capture.at(3).unwrap().parse());
+        let (start, end) = (capture.get(2).unwrap().as_str().parse(), capture.get(3).unwrap().as_str().parse());
         match (start, end) {
-            (Ok(s), Ok(e)) => Some(LineType::Lines(capture.at(1).unwrap().to_string(), s, e)),
+            (Ok(s), Ok(e)) => Some(LineType::Lines(capture.get(1).unwrap().as_str().to_string(), s, e)),
             _ => None
         }
     } else {
